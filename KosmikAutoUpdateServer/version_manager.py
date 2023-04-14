@@ -57,21 +57,26 @@ class VersionManager:
         self.__conn.commit()
 
     def get_channels(self) -> list[dict]:
-        return [{"name": name, "version": GitSemanticVersion.parse(version)} for name, version in
+        return [{"name": name, "version": version} for name, version in
                 self.__conn.execute("""SELECT name, version_id FROM channels""").fetchall()]
+
+    def get_version_id_by_channel(self, channel: str) -> str | None:
+        return self.__conn.execute("""SELECT version_id FROM channels WHERE name=?""", [channel]).fetchone()[0]
 
     def get_version(self, version: str | GitSemanticVersion) -> dict | None:
         x = self.__conn.execute(
             """SELECT version_id, ver_datetime, archive_bytes, archive_md5 FROM versions WHERE version_id=?""",
             [str(version)]).fetchone()
-        return {"version": GitSemanticVersion.parse(x[0]),
+        return {"version": x[0],
                 "date": x[1],
                 "archive_bytes": x[2],
                 "archive_md5": x[3]} if x is not None else None
 
     def get_version_files(self, version: str | GitSemanticVersion) -> list[dict]:
-        return [{"file_hash": a, "path": b} for a, b in
-                self.__conn.execute("""SELECT md5, path,  FROM version_files WHERE version_id=?""",
+        return [{"file_hash": a, "path": b, "bytes": c, "archive_bytes": d} for a, b, c, d in
+                self.__conn.execute(""" SELECT vf.md5, vf.path, f.bytes, f.archive_bytes
+                                        FROM version_files vf, files f 
+                                        WHERE vf.version_id=? AND vf.md5=f.md5""",
                                     [str(version)]).fetchall()]
 
     def get_fileinfo(self, file_hash: str) -> dict | None:
@@ -138,7 +143,7 @@ class VersionManager:
                              hashlib.md5(open(archive_path, "rb").read()).hexdigest(),
                              str(version)])
         self.__conn.commit()
-        print("Version 1.2.7 DONE")
+        print("Version", version, "DONE")
 
     def set_channel(self, channel: str, version: str | GitSemanticVersion) -> None:
         assert self.has_version(version)
@@ -148,9 +153,12 @@ class VersionManager:
             self.__conn.execute("""INSERT INTO channels(name, version_id) VALUES (?, ?)""", [channel, str(version)])
         self.__conn.commit()
 
+    def dispose(self):
+        self.__conn.close()
+
 
 if __name__ == "__main__":
     vm = VersionManager("index.db", "dl/")
-    vm.add_version(GitSemanticVersion(1, 2, 7), "../.idea")
-    vm.set_channel("main", GitSemanticVersion(1, 2, 7))
+    vm.add_version(GitSemanticVersion(1, 2, 3), "../.idea")
+    vm.set_channel("main", GitSemanticVersion(1, 2, 3))
     # vm.set_channel("test", GitSemanticVersion(1, 2, 7))
