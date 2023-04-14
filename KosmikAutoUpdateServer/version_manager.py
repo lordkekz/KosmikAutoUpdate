@@ -1,91 +1,156 @@
-import json
+from __future__ import annotations
+
+import hashlib
 import os
+import sqlite3
 import time
 import zipfile
-from typing import Optional
 
 from gitsemanticversion import GitSemanticVersion
+
+CREATE_DB_SCHEMA = """
+-- Enable enforcing of foreign keys
+PRAGMA foreign_keys = ON;
+
+-- Versions table
+CREATE TABLE IF NOT EXISTS versions (
+    version_id text PRIMARY KEY,
+    ver_datetime text NOT NULL,
+    archive_bytes integer,
+    archive_md5 string
+);
+
+-- Files table
+CREATE TABLE IF NOT EXISTS files (
+    md5 text PRIMARY KEY,
+    bytes integer NOT NULL,
+    archive_bytes integer NOT NULL
+);
+
+-- Relationship of versions to their constituting files
+CREATE TABLE IF NOT EXISTS version_files (
+    version_id text NOT NULL,
+    path text NOT NULL,
+    md5 text NOT NULL,
+    FOREIGN KEY (version_id) REFERENCES versions (version_id),
+    FOREIGN KEY (md5) REFERENCES files (md5),
+    PRIMARY KEY (version_id, path)
+);
+
+-- Channels to point so some versions
+CREATE TABLE IF NOT EXISTS channels (
+    name text PRIMARY KEY,
+    version_id text NOT NULL,
+    FOREIGN KEY (version_id) REFERENCES versions (version_id)
+);
+"""
 
 
 class VersionManager:
     def __init__(self, index_path: str, dl_dir: str):
-        self.__index_path = index_path
+        self.__conn = sqlite3.connect(index_path)
         self.__dl_hashes_path = os.path.join(dl_dir, "hashed_files")
         self.__dl_versions_path = os.path.join(dl_dir, "version_zips")
         os.makedirs(self.__dl_hashes_path, exist_ok=True)
         os.makedirs(self.__dl_versions_path, exist_ok=True)
-        self.__obj = dict()
-        self.reload()
+        self.__conn.executescript(CREATE_DB_SCHEMA)
+        self.__conn.commit()
 
-    def get_channels(self) -> object:
-        return self.__obj["channels"]
+    def get_channels(self) -> list[dict]:
+        return [{"name": name, "version": GitSemanticVersion.parse(version)} for name, version in
+                self.__conn.execute("""SELECT name, version_id FROM channels""").fetchall()]
 
-    def get_version(self, version_id: str) -> Optional[object]:
-        try:
-            return self.__obj["versions"][version_id]
-        except Exception:
-            return None
+    def get_version(self, version: str | GitSemanticVersion) -> dict | None:
+        x = self.__conn.execute(
+            """SELECT version_id, ver_datetime, archive_bytes, archive_md5 FROM versions WHERE version_id=?""",
+            [str(version)]).fetchone()
+        return {"version": GitSemanticVersion.parse(x[0]),
+                "date": x[1],
+                "archive_bytes": x[2],
+                "archive_md5": x[3]} if x is not None else None
 
-    def get_channel_version(self, channel: str) -> Optional[str]:
-        try:
-            return self.__obj["channels"][channel]["current_version"]
-        except Exception:
-            return None
+    def get_version_files(self, version: str | GitSemanticVersion) -> list[dict]:
+        return [{"file_hash": a, "path": b} for a, b in
+                self.__conn.execute("""SELECT md5, path,  FROM version_files WHERE version_id=?""",
+                                    [str(version)]).fetchall()]
 
-    def add_version(self, version: GitSemanticVersion, directory_path: str):
-        assert str(version) not in self.__obj["versions"]
-        ver = {"date": time.strftime("%Y-%m-%d %H:%M:%S"),
-               "files": {}}
-        from shutil import copyfile
-        import os
-        import hashlib
+    def get_fileinfo(self, file_hash: str) -> dict | None:
+        x = self.__conn.execute("""SELECT bytes, archive_bytes FROM files WHERE md5=?""",
+                                [file_hash]).fetchone()
+        return {"bytes": x[0], "archive_bytes": x[1]} if x is not None else None
+
+    def has_channel(self, channel: str) -> bool:
+        return channel in self.get_channels()
+
+    def has_version(self, version: str | GitSemanticVersion) -> bool:
+        return self.get_version(version) is not None
+
+    def has_file(self, file_hash: str) -> bool:
+        return self.get_fileinfo(file_hash) is not None
+
+    def is_file_used(self, file_hash: str) -> bool:
+        x = self.__conn.execute("""SELECT version_id FROM files WHERE md5=? LIMIT 1""", [file_hash]).fetchone()
+        return x is not None
+
+    def add_version(self, version: str | GitSemanticVersion, directory_path: str):
+        assert not self.has_version(version)
+        print("Adding version", version)
+
+        # Create version
+        self.__conn.execute("""INSERT INTO versions(version_id, ver_datetime) VALUES (?, ?)""",
+                            [str(version), time.strftime("%Y-%m-%d %H:%M:%S")])
+
+        # Process files in directory_path
         archive_path = os.path.join(self.__dl_versions_path, str(version) + ".zip")
-        with zipfile.ZipFile(archive_path, "w") as f:
+        with zipfile.ZipFile(archive_path, "w") as version_archive:
             for current_dir, _, files in os.walk(directory_path):
                 for filename in files:
-                    filepath = os.path.join(current_dir[len(directory_path):], filename)
-                    print(filepath)
-                    absolute_path = os.path.abspath(os.path.join(directory_path, filepath))
-                    ver["files"][filepath] = entry = {
-                        "md5": hashlib.md5(open(absolute_path, "rb").read()).hexdigest(),
-                        "bytes": os.path.getsize(absolute_path)
-                    }
+                    absolute_path = os.path.abspath(os.path.join(current_dir, filename))
+                    filepath = os.path.relpath(absolute_path, directory_path)
+                    print(end=f"Version {version}; Processing file {filepath}")
 
-                    f.write(absolute_path, filepath)
-                    hash_path = os.path.join(self.__dl_hashes_path, entry["md5"])
-                    if not os.path.exists(hash_path):
-                        copyfile(absolute_path, hash_path)
-        ver["archive_bytes"] = os.path.getsize(archive_path)
-        ver["archive_md5"] = hashlib.md5(open(archive_path, "rb").read()).hexdigest()
-        self.__obj["versions"][str(version)] = ver
-        self.save()
+                    size_bytes = os.path.getsize(absolute_path)
+                    md5 = hashlib.md5(open(absolute_path, "rb").read()).hexdigest()
+                    hash_path = os.path.join(self.__dl_hashes_path, md5 + ".zip")
 
-    def set_channel(self, channel: str, version: GitSemanticVersion):
-        if channel not in self.__obj["channels"]:
-            self.__obj["channels"][channel] = dict()
-        self.__obj["channels"][channel]["current_version"] = str(version)
-        self.save()
+                    # Store compressed file
+                    if not self.has_file(md5):
+                        with zipfile.ZipFile(hash_path, "x") as file_archive:
+                            file_archive.write(absolute_path, md5)
+                            archive_bytes = os.path.getsize(hash_path)
+                        self.__conn.execute("""INSERT INTO files(md5, bytes, archive_bytes) VALUES (?,?,?)""",
+                                            [md5, size_bytes, archive_bytes])
+                    else:
+                        archive_bytes = os.path.getsize(hash_path)
+                    print(end=f"; MD5 {md5}; Bytes {size_bytes}; Archive {archive_bytes}")
 
-    def reload(self):
-        try:
-            with open(self.__index_path) as f:
-                self.__obj = json.load(f)
-        except IOError:
-            pass
+                    # Add file to version
+                    self.__conn.execute("""INSERT INTO version_files(version_id, md5, path) VALUES (?,?,?)""",
+                                        [str(version), md5, filepath])
 
-        if "versions" not in self.__obj:
-            self.__obj["versions"] = dict()
-        if "channels" not in self.__obj:
-            self.__obj["channels"] = dict()
-        self.save()
+                    # Add file to version archive
+                    version_archive.write(absolute_path, filepath)
+                    print("; DONE")
 
-    def save(self):
-        with open(self.__index_path, "w") as f:
-            json.dump(self.__obj, f, indent=4)
+        # Update archive info
+        self.__conn.execute("""UPDATE versions SET archive_bytes=?, archive_md5=? WHERE version_id=?""",
+                            [os.path.getsize(archive_path),
+                             hashlib.md5(open(archive_path, "rb").read()).hexdigest(),
+                             str(version)])
+        self.__conn.commit()
+        print("Version 1.2.7 DONE")
+
+    def set_channel(self, channel: str, version: str | GitSemanticVersion) -> None:
+        assert self.has_version(version)
+        if self.has_channel(channel):
+            self.__conn.execute("""UPDATE channels SET version_id = ? WHERE name = ?""", [str(version), channel])
+        else:
+            self.__conn.execute("""INSERT INTO channels(name, version_id) VALUES (?, ?)""", [channel, str(version)])
+        self.__conn.commit()
 
 
 if __name__ == "__main__":
-    vm = VersionManager()
-    # vm.add_version(GitSemanticVersion(1, 2, 7), "testpath/")
-    # vm.set_channel("main", GitSemanticVersion(1, 2, 6))
+    vm = VersionManager("index.db", "dl/")
+    vm.add_version(GitSemanticVersion(1, 2, 7), "../.idea")
+    vm.set_channel("main", GitSemanticVersion(1, 2, 7))
     # vm.set_channel("test", GitSemanticVersion(1, 2, 7))
