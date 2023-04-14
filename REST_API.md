@@ -33,15 +33,14 @@ Example response:
 {
 	"version_id" : "0.1.2",
 	"date" : "2023_04_13 21:51:34",
-	"folder_url" : "https://...",
 	"archive_url" : "https://...",
-	"archive_size" : 1234,
+	"archive_bytes" : 1234,
+	"archive_md5" : "(md5)",
 	"files" : {
 		"relative/path/to/file" : {
 			"md5" : "(md5)",
 			"bytes" : 1234
-		},
-		...
+		}
 	}
 }
 ```
