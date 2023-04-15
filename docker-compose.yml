@@ -1,0 +1,30 @@
+---
+version: "2.1"
+name: kosmik
+volumes:
+  kosmik_dl:
+
+services:
+  kosmik_caddy:
+    image: caddy:latest
+    container_name: kosmik_caddy
+    hostname: kosmik_caddy
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - $PWD/Caddyfile:/etc/caddy/Caddyfile
+      - $PWD/dl:/srv
+  kosmik:
+    image: kosmik:latest
+    container_name: kosmik
+    hostname: kosmik
+    restart: unless-stopped
+    environment:
+      - "KOSMIK_DL_HOST=http://localhost:8000"
+    ports:
+      - "8080:8080"
+    volumes:
+      - $PWD/index.db:/index.db
+      - $PWD/.idea:/pwd
+      - $PWD/dl:/dl

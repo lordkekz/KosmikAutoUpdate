@@ -1,0 +1,9 @@
+:8000 {
+	forward_auth kosmik:8080 {
+	    uri /check_access{path}?{query}
+    	header_up X-Original-IP {remote_host}
+    }
+
+	root * /srv
+	file_server browse
+}

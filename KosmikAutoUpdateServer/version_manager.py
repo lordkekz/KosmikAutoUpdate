@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import secrets
 import sqlite3
 import time
 import zipfile
@@ -43,6 +44,15 @@ CREATE TABLE IF NOT EXISTS channels (
     version_id text NOT NULL,
     FOREIGN KEY (version_id) REFERENCES versions (version_id)
 );
+
+-- Tokens to authorize downloading a specific file
+CREATE TABLE IF NOT EXISTS download_tokens (
+    relative_path text NOT NULL,
+    ip text NOT NULL,
+    token text NOT NULL,
+    expiration text NOT NULL,
+    PRIMARY KEY (relative_path, ip)
+);
 """
 
 
@@ -61,7 +71,8 @@ class VersionManager:
                 self.__conn.execute("""SELECT name, version_id FROM channels""").fetchall()]
 
     def get_version_id_by_channel(self, channel: str) -> str | None:
-        return self.__conn.execute("""SELECT version_id FROM channels WHERE name=?""", [channel]).fetchone()[0]
+        x = self.__conn.execute("""SELECT version_id FROM channels WHERE name=?""", [channel]).fetchone()
+        return x[0] if x is not None else None
 
     def get_version(self, version: str | GitSemanticVersion) -> dict | None:
         x = self.__conn.execute(
@@ -96,6 +107,32 @@ class VersionManager:
     def is_file_used(self, file_hash: str) -> bool:
         x = self.__conn.execute("""SELECT version_id FROM files WHERE md5=? LIMIT 1""", [file_hash]).fetchone()
         return x is not None
+
+    def get_download_token(self, relative_path: str, ip: str):
+        x = self.__conn.execute("""SELECT token, expiration FROM download_tokens WHERE relative_path=? AND ip=?""",
+                                [relative_path, ip]).fetchone()
+        return {"token": x[0], "expiration": x[1]} if x is not None else None
+
+    def make_download_token(self, relative_path: str, ip: str) -> dict:
+        dt = self.get_download_token(relative_path, ip)
+        if dt is not None:
+            return dt
+
+        # Generate random token data and hash it to always have consistent length and simple chars
+        random_token = hashlib.md5(secrets.token_bytes(64)).hexdigest()
+
+        # Expiration time is current time plus 10 minutes
+        expiration = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + 10 * 60))
+
+        self.__conn.execute("""INSERT INTO download_tokens(relative_path, ip, token, expiration) VALUES (?,?,?,?)""",
+                            [relative_path, ip, random_token, expiration])
+        self.__conn.commit()
+        return {"token": random_token, "expiration": expiration}
+
+    def purge_expired_tokens(self):
+        self.__conn.execute("""DELETE FROM download_tokens WHERE expiration<?""",
+                            [time.strftime("%Y-%m-%d %H:%M:%S")])
+        self.__conn.commit()
 
     def add_version(self, version: str | GitSemanticVersion, directory_path: str):
         assert not self.has_version(version)
@@ -158,7 +195,7 @@ class VersionManager:
 
 
 if __name__ == "__main__":
-    vm = VersionManager("index.db", "dl/")
-    vm.add_version(GitSemanticVersion(1, 2, 3), "../.idea")
+    vm = VersionManager("/index.db", "/dl/")
+    vm.add_version(GitSemanticVersion(1, 2, 3), "/pwd/")
     vm.set_channel("main", GitSemanticVersion(1, 2, 3))
     # vm.set_channel("test", GitSemanticVersion(1, 2, 7))
