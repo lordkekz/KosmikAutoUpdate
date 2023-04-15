@@ -54,4 +54,4 @@ Also, a header `X-Original-IP` must be set to the IP address of the client which
 
 Response:
 If the provided token is valid for the file path and client IP, the response will have a `2xx` status code and download access should be granted.
-If it is invalid or missing, a `403` status code is returned and download access should not be granted.
+Otherwise, a `4xx` status code is returned and download access should not be granted.

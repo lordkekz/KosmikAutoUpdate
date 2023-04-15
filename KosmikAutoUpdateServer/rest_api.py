@@ -94,9 +94,9 @@ def get_version():
 def check_access(relative_path: str):
     relative_path = "/" + relative_path
     if "token" not in request.args:
-        return "Token required", 403
+        return "Token required", 401
     if "X-Original-IP" not in request.headers:
-        return "Missing header", 500
+        return "Missing header", 400
     token = request.args["token"]
     ip = request.headers["X-Original-IP"]
     print(end=f"Checking access to {relative_path} with token {token} for {ip}", file=sys.stderr)
