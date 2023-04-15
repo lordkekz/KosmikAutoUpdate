@@ -1,4 +1,4 @@
-# Endpoint: `/GET_CHANNELS`
+# Endpoint: `/get_channels`
 Example request:
 ```json
 { }
@@ -14,7 +14,7 @@ Example response:
 }
 ```
 
-# Endpoint: `/GET_VERSION`
+# Endpoint: `/get_version`
 Example requests:
 ```json
 {
@@ -45,3 +45,13 @@ Example response:
   }
 }
 ```
+
+# Endpoint `/check_acces/<path>`
+
+Request format:
+`GET /check_access/version_zips/1.2.3.zip?token=<token>`
+Also, a header `X-Original-IP` must be set to the IP address of the client which is trying to download the file.
+
+Response:
+If the provided token is valid for the file path and client IP, the response will have a `2xx` status code and download access should be granted.
+If it is invalid or missing, a `403` status code is returned and download access should not be granted.
