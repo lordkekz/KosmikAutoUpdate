@@ -77,7 +77,7 @@ def get_version():
         "files": dict([(x["path"], {
             "file_hash": x["file_hash"],
             "compressed_bytes": x["compressed_bytes"],
-            "url": make_url_file(x["file_hash"])
+            "file_url": make_url_file(x["file_hash"])
         }) for x in vm.get_version_files(ver_id)])
     }
 
