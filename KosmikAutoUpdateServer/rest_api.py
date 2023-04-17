@@ -72,10 +72,10 @@ def get_version():
         "version_id": ver_id,
         "date": ver["date"],
         "archive_bytes": ver["archive_bytes"],
-        "archive_md5": ver["archive_md5"],
+        "archive_sha256": ver["archive_sha256"],
         "archive_url": make_url_version_archive(ver_id),
         "files": dict([(x["path"], {
-            "md5": x["file_hash"],
+            "sha256": x["file_hash"],
             "archive_bytes": x["archive_bytes"],
             "file_url": make_url_file(x["file_hash"])
         }) for x in vm.get_version_files(ver_id)])
