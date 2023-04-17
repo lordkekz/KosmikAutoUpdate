@@ -18,23 +18,23 @@ CREATE TABLE IF NOT EXISTS versions (
     version_id text PRIMARY KEY,
     ver_datetime text NOT NULL,
     archive_bytes integer,
-    archive_sha256 string
+    archive_hash string
 );
 
 -- Files table
 CREATE TABLE IF NOT EXISTS files (
-    sha256 text PRIMARY KEY,
+    hash text PRIMARY KEY,
     bytes integer NOT NULL,
-    archive_bytes integer NOT NULL
+    compressed_bytes integer NOT NULL
 );
 
 -- Relationship of versions to their constituting files
 CREATE TABLE IF NOT EXISTS version_files (
     version_id text NOT NULL,
     path text NOT NULL,
-    sha256 text NOT NULL,
+    hash text NOT NULL,
     FOREIGN KEY (version_id) REFERENCES versions (version_id),
-    FOREIGN KEY (sha256) REFERENCES files (sha256),
+    FOREIGN KEY (hash) REFERENCES files (hash),
     PRIMARY KEY (version_id, path)
 );
 
@@ -76,24 +76,24 @@ class VersionManager:
 
     def get_version(self, version: str | GitSemanticVersion) -> dict | None:
         x = self.__conn.execute(
-            """SELECT version_id, ver_datetime, archive_bytes, archive_sha256 FROM versions WHERE version_id=?""",
+            """SELECT version_id, ver_datetime, archive_bytes, archive_hash FROM versions WHERE version_id=?""",
             [str(version)]).fetchone()
         return {"version": x[0],
                 "date": x[1],
                 "archive_bytes": x[2],
-                "archive_sha256": x[3]} if x is not None else None
+                "archive_hash": x[3]} if x is not None else None
 
     def get_version_files(self, version: str | GitSemanticVersion) -> list[dict]:
-        return [{"file_hash": a, "path": b, "bytes": c, "archive_bytes": d} for a, b, c, d in
-                self.__conn.execute(""" SELECT vf.sha256, vf.path, f.bytes, f.archive_bytes
+        return [{"file_hash": a, "path": b, "bytes": c, "compressed_bytes": d} for a, b, c, d in
+                self.__conn.execute(""" SELECT vf.hash, vf.path, f.bytes, f.compressed_bytes
                                         FROM version_files vf, files f 
-                                        WHERE vf.version_id=? AND vf.sha256=f.sha256""",
+                                        WHERE vf.version_id=? AND vf.hash=f.hash""",
                                     [str(version)]).fetchall()]
 
     def get_fileinfo(self, file_hash: str) -> dict | None:
-        x = self.__conn.execute("""SELECT bytes, archive_bytes FROM files WHERE sha256=?""",
+        x = self.__conn.execute("""SELECT bytes, compressed_bytes FROM files WHERE hash=?""",
                                 [file_hash]).fetchone()
-        return {"bytes": x[0], "archive_bytes": x[1]} if x is not None else None
+        return {"bytes": x[0], "compressed_bytes": x[1]} if x is not None else None
 
     def has_channel(self, channel: str) -> bool:
         return channel in self.get_channels()
@@ -105,7 +105,7 @@ class VersionManager:
         return self.get_fileinfo(file_hash) is not None
 
     def is_file_used(self, file_hash: str) -> bool:
-        x = self.__conn.execute("""SELECT version_id FROM files WHERE sha256=? LIMIT 1""", [file_hash]).fetchone()
+        x = self.__conn.execute("""SELECT version_id FROM files WHERE hash=? LIMIT 1""", [file_hash]).fetchone()
         return x is not None
 
     def get_download_token(self, relative_path: str, ip: str):
@@ -152,30 +152,30 @@ class VersionManager:
                     print(end=f"Version {version}; Processing file {filepath}")
 
                     size_bytes = os.path.getsize(absolute_path)
-                    sha256 = hashlib.sha256(open(absolute_path, "rb").read()).hexdigest()
-                    hash_path = os.path.join(self.__dl_hashes_path, sha256 + ".zip")
+                    file_hash = hashlib.sha256(open(absolute_path, "rb").read()).hexdigest()
+                    hash_path = os.path.join(self.__dl_hashes_path, file_hash + ".zip")
 
                     # Store compressed file
-                    if not self.has_file(sha256):
+                    if not self.has_file(file_hash):
                         with zipfile.ZipFile(hash_path, "x") as file_archive:
-                            file_archive.write(absolute_path, sha256)
-                            archive_bytes = os.path.getsize(hash_path)
-                        self.__conn.execute("""INSERT INTO files(sha256, bytes, archive_bytes) VALUES (?,?,?)""",
-                                            [sha256, size_bytes, archive_bytes])
+                            file_archive.write(absolute_path, file_hash)
+                            compressed_bytes = os.path.getsize(hash_path)
+                        self.__conn.execute("""INSERT INTO files(hash, bytes, compressed_bytes) VALUES (?,?,?)""",
+                                            [file_hash, size_bytes, compressed_bytes])
                     else:
-                        archive_bytes = os.path.getsize(hash_path)
-                    print(end=f"; sha256 {sha256}; Bytes {size_bytes}; Archive {archive_bytes}")
+                        compressed_bytes = os.path.getsize(hash_path)
+                    print(end=f"; hash {file_hash}; Bytes {size_bytes}; Compressed {compressed_bytes}")
 
                     # Add file to version
-                    self.__conn.execute("""INSERT INTO version_files(version_id, sha256, path) VALUES (?,?,?)""",
-                                        [str(version), sha256, filepath])
+                    self.__conn.execute("""INSERT INTO version_files(version_id, hash, path) VALUES (?,?,?)""",
+                                        [str(version), file_hash, filepath])
 
                     # Add file to version archive
                     version_archive.write(absolute_path, filepath)
                     print("; DONE")
 
         # Update archive info
-        self.__conn.execute("""UPDATE versions SET archive_bytes=?, archive_sha256=? WHERE version_id=?""",
+        self.__conn.execute("""UPDATE versions SET archive_bytes=?, archive_hash=? WHERE version_id=?""",
                             [os.path.getsize(archive_path),
                              hashlib.sha256(open(archive_path, "rb").read()).hexdigest(),
                              str(version)])
