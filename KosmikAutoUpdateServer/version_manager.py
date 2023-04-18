@@ -122,7 +122,7 @@ class VersionManager:
         random_token = hashlib.sha256(secrets.token_bytes(64)).hexdigest()
 
         # Expiration time is current time plus 10 minutes
-        expiration = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() + 10 * 60))
+        expiration = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.localtime(time.time() + 10 * 60))
 
         self.__conn.execute("""INSERT INTO download_tokens(relative_path, ip, token, expiration) VALUES (?,?,?,?)""",
                             [relative_path, ip, random_token, expiration])
@@ -131,7 +131,7 @@ class VersionManager:
 
     def purge_expired_tokens(self):
         self.__conn.execute("""DELETE FROM download_tokens WHERE expiration<?""",
-                            [time.strftime("%Y-%m-%d %H:%M:%S")])
+                            [time.strftime("%Y-%m-%dT%H:%M:%SZ")])
         self.__conn.commit()
 
     def add_version(self, version: str | GitSemanticVersion, directory_path: str):
@@ -140,7 +140,7 @@ class VersionManager:
 
         # Create version
         self.__conn.execute("""INSERT INTO versions(version_id, ver_datetime) VALUES (?, ?)""",
-                            [str(version), time.strftime("%Y-%m-%d %H:%M:%S")])
+                            [str(version), time.strftime("%Y-%m-%dT%H:%M:%SZ")])
 
         # Process files in directory_path
         archive_path = os.path.join(self.__dl_versions_path, str(version) + ".zip")

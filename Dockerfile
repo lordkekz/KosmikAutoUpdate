@@ -4,7 +4,7 @@ FROM python:3.11-slim-bullseye
 RUN pip install flask==2.2.* requests waitress
 
 # Install app
-COPY KosmikAutoUpdateServer/* /KosmikAutoUpdateServer/
+COPY KosmikAutoUpdateServer/* /Kosmik/
 EXPOSE 8080
 
-CMD python3 /KosmikAutoUpdateServer/__main__.py
+CMD python3 /Kosmik/__main__.py
